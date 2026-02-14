@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "Julia Motion",
-    "slug": "julia-motion",
+    "name": "OrthoApp",
+    "slug": "ortho-app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "julia",
+    "scheme": "orthoapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
@@ -20,7 +20,7 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.juliamotion"
+      "package": "com.anonymous.orthoapp"
     },
     "web": {
       "output": "static",
