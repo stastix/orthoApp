@@ -44,7 +44,7 @@ function calculateAngle(
  * Get keypoint by name from pose keypoints
  */
 function getKeypoint(keypoints: Keypoint[], name: string): Keypoint | null {
-  return keypoints.find((kp) => kp.name === name && kp.score > 0.3) || null;
+  return keypoints.find((kp) => kp.name === name && kp.score > 0.15) || null;
 }
 
 /**

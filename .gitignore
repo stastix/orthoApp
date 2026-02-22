@@ -45,3 +45,8 @@ app-example
 # generated native folders
 /ios
 /android
+
+# Model files (too large for git)
+assets/models/*.pb
+assets/models/variables/*
+!assets/models/.gitkeep

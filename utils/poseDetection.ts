@@ -11,9 +11,24 @@ import { KEYPOINT_NAMES, MOVENET_KEYPOINT_NAMES, KeypointName, Keypoint, Pose } 
 export type { KeypointName, Keypoint, Pose } from './keypoints';
 export { KEYPOINT_NAMES } from './keypoints';
 
+// Singleton instance to prevent multiple model loads
+let globalDetectorInstance: PoseDetector | null = null;
+
 export class PoseDetector {
   private detector: poseDetection.PoseDetector | null = null;
-  private isInitialized = false;
+  private _isInitialized = false;
+  private static instance: PoseDetector | null = null;
+
+  static getInstance(): PoseDetector {
+    if (!PoseDetector.instance) {
+      PoseDetector.instance = new PoseDetector();
+    }
+    return PoseDetector.instance;
+  }
+
+  get isInitialized(): boolean {
+    return this._isInitialized;
+  }
 
   async initialize(): Promise<void> {
     try {     
@@ -32,7 +47,7 @@ export class PoseDetector {
       this.detector = await poseDetection.createDetector(model, detectorConfig);
       console.log('MoveNet detector loaded successfully');
       
-      this.isInitialized = true;
+      this._isInitialized = true;
     } catch (error) {
       console.error('Failed to initialize pose detector:', error);
       throw error;
@@ -43,7 +58,7 @@ export class PoseDetector {
     imageInput: tf.Tensor3D | string | ImageData | HTMLImageElement | HTMLCanvasElement | HTMLVideoElement | { data: Uint32Array; width: number; height: number },
     options?: { width?: number; height?: number }
   ): Promise<Pose | null> {
-    if (!this.detector || !this.isInitialized) {
+    if (!this.detector || !this._isInitialized) {
       return null;
     }
 
@@ -57,15 +72,16 @@ export class PoseDetector {
         const shape = imageInput.shape;
         imageHeight = options?.height || shape[0];
         imageWidth = options?.width || shape[1];
+      } else if (typeof imageInput === 'string') {
+        // Image URI - use options for dimensions
+        imageWidth = options?.width || 0;
+        imageHeight = options?.height || 0;
       } else if (typeof imageInput === 'object' && 'width' in imageInput && 'height' in imageInput) {
-        // We need to avoid type errors due to usage of DOM classes like HTMLImageElement and HTMLCanvasElement
-        // which may not be available in all environments (like React Native).
-        // Safer duck-typing approach:
-        // Use duck-typing to get width/height safely, avoiding instanceof errors in non-browser environments
         imageWidth = (imageInput as { width: number }).width;
         imageHeight = (imageInput as { height: number }).height;
       }
       
+      // MoveNet handles everything - just pass the input
       const poses = await this.detector.estimatePoses(imageInput as any);
       
       if (!poses || poses.length === 0) {
@@ -88,13 +104,10 @@ export class PoseDetector {
         const rawName = (kp as any).name;
         const kpName = rawName || MOVENET_KEYPOINT_NAMES[index] || KEYPOINT_NAMES[index] || 'unknown';
         
-        // Check if coordinates are normalized (0-1) or already in pixels
-        // MoveNet typically returns normalized coordinates
-        const isNormalized = kp.x <= 1.0 && kp.y <= 1.0 && imageWidth > 0 && imageHeight > 0;
-        
-        // Convert normalized coordinates (0-1) to pixel coordinates
-        const pixelX = isNormalized && imageWidth > 0 ? kp.x * imageWidth : kp.x;
-        const pixelY = isNormalized && imageHeight > 0 ? kp.y * imageHeight : kp.y;
+        // MoveNet returns normalized coordinates (0-1) when given a tensor
+        // Convert to pixel coordinates in the tensor space
+        const pixelX = imageWidth > 0 ? kp.x * imageWidth : kp.x;
+        const pixelY = imageHeight > 0 ? kp.y * imageHeight : kp.y;
         
         const result = {
           x: pixelX,
@@ -103,13 +116,7 @@ export class PoseDetector {
           name: (KEYPOINT_NAMES.includes(kpName as any) ? kpName : KEYPOINT_NAMES[index] || 'unknown') as KeypointName,
         };
         
-        if (index < 3) {
-          console.log(`Keypoint ${index} (${kpName}):`, {
-            raw: { x: kp.x, y: kp.y, score: kp.score },
-            converted: { x: pixelX, y: pixelY },
-            isNormalized,
-          });
-        }
+        // No debug logs - just return the keypoint
         
         return result;
       });
@@ -131,7 +138,7 @@ export class PoseDetector {
     if (this.detector) {
       this.detector.dispose();
       this.detector = null;
-      this.isInitialized = false;
+      this._isInitialized = false;
     }
   }
 }

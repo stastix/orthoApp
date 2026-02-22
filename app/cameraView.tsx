@@ -1,158 +1,120 @@
-import { CameraType, CameraView, useCameraPermissions } from "expo-camera";
-import { useState, useEffect, useRef, useCallback } from "react";
-import { Button, StyleSheet, Text, TouchableOpacity, View, ActivityIndicator, Dimensions } from "react-native";
+import { useState, useEffect, useRef } from "react";
+import { StyleSheet, Text, TouchableOpacity, View, ActivityIndicator, Dimensions, Alert } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { usePoseDetection } from "../hooks/usePoseDetection";
 import PoseOverlay from "../components/PoseOverlay";
+import { Camera, useCameraDevice, useFrameProcessor, useCameraPermission } from "react-native-vision-camera";
+import { runOnJS } from "react-native-reanimated";
 import * as tf from '@tensorflow/tfjs';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
 export default function CameraViewScreen() {
-  const { patientId, joint, side, movement } = useLocalSearchParams<{
-    patientId?: string;
+  const { joint, side, movement } = useLocalSearchParams<{
     joint?: string;
     side?: string;
     movement?: string;
   }>();
 
-  const [facing, setFacing] = useState<CameraType>("front"); // Front camera for self-facing pose detection
-  const [permission, requestPermission] = useCameraPermissions();
+  const [facing, setFacing] = useState<'front' | 'back'>('front');
   const [cameraDimensions, setCameraDimensions] = useState({ width: SCREEN_WIDTH, height: SCREEN_HEIGHT });
-  const cameraRef = useRef<any>(null);
-  const frameProcessingRef = useRef(false);
   const [tfReady, setTfReady] = useState(false);
+  const frameCountRef = useRef(0);
+
+  // Request camera permission
+  const { hasPermission, requestPermission } = useCameraPermission();
+  const device = useCameraDevice(facing);
+
+  // Request permission on mount
+  useEffect(() => {
+    if (!hasPermission) {
+      requestPermission().then((granted) => {
+        if (!granted) {
+          Alert.alert(
+            "Camera Permission Required",
+            "This app needs camera access for pose detection. Please enable it in settings.",
+            [{ text: "OK" }]
+          );
+        }
+      });
+    }
+  }, [hasPermission, requestPermission]);
 
   // Initialize TensorFlow.js
   useEffect(() => {
-    const initTF = async () => {
-      try {
-        await tf.ready();
-        setTfReady(true);
-      } catch (error) {
-        console.error("❌ TensorFlow.js initialization error:", error);
-      }
-    };
-    initTF();
+    tf.ready().then(() => {
+      setTfReady(true);
+    }).catch(err => {
+      console.error('TensorFlow error:', err);
+    });
   }, []);
 
-  // Initialize pose detection (no model path needed - TensorFlow.js downloads automatically)
+  // Initialize pose detection
   const { pose, shoulderAngles, isLoading: poseLoading, error: poseError, processFrame } = usePoseDetection({
     enabled: tfReady,
-    frameInterval: 3, // Process every 3rd frame
   });
 
-  const handleCameraReady = useCallback(() => {
-    console.log("Camera ready");
-  }, []);
+  // REAL-TIME FRAME PROCESSOR - DIRECT PIXEL DATA, NO PHOTOS
+  const frameProcessor = useFrameProcessor((frame) => {
+    'worklet';
 
-  // Capture frame from camera and process with TensorFlow.js
-  const captureFrame = useCallback(async () => {
-    console.log('captureFrame called:', { hasCamera: !!cameraRef.current, processing: frameProcessingRef.current, hasProcessFrame: !!processFrame });
-
-    if (!cameraRef.current || frameProcessingRef.current || !processFrame) {
-      console.log('captureFrame: Skipping - camera:', !!cameraRef.current, 'processing:', frameProcessingRef.current, 'processFrame:', !!processFrame);
-      return;
-    }
-
-    frameProcessingRef.current = true;
     try {
-      console.log('captureFrame: Taking picture...');
-      // Take a picture from the camera
-      // Use lower quality and smaller size to reduce memory usage
-      const photo = await cameraRef.current.takePictureAsync({
-        quality: 0.3, // Lower quality to reduce size
-        skipProcessing: false,
-        // Note: expo-camera doesn't support direct resolution control,
-        // but lower quality helps reduce file size
-      });
-
-      console.log('captureFrame: Photo taken:', { uri: photo?.uri?.substring(0, 50), width: photo?.width, height: photo?.height });
-
-      if (photo) {
-        setCameraDimensions({ width: photo.width || SCREEN_WIDTH, height: photo.height || SCREEN_HEIGHT });
-
-        // Process the image URI with TensorFlow.js
-        console.log('captureFrame: Calling processFrame...');
-        await processFrame(photo.uri);
+      frameCountRef.current++;
+      // Process every 2nd frame (~15 FPS)
+      if (frameCountRef.current % 2 !== 0) {
+        return;
       }
-    } catch (error) {
-      console.error("Frame capture error:", error);
-    } finally {
-      frameProcessingRef.current = false;
+
+      // Get pixel data directly from frame - NO JPEG, NO DISK I/O
+      const buffer = frame.toArrayBuffer();
+      const width = frame.width;
+      const height = frame.height;
+
+      // Update dimensions
+      runOnJS(setCameraDimensions)({ width, height });
+
+      // Process frame directly - MoveNet gets raw pixel data
+      runOnJS(processFrame)(buffer, width, height, frame.pixelFormat);
+    } catch {
+      // Silent fail in worklet
     }
   }, [processFrame]);
 
-  // Set up periodic frame capture for real-time pose detection
-  useEffect(() => {
-    if (!tfReady || poseLoading) return;
-
-    const interval = setInterval(() => {
-      captureFrame();
-    }, 300); // Capture every 300ms (~3 FPS for processing)
-
-    return () => clearInterval(interval);
-  }, [tfReady, poseLoading, captureFrame]);
-
-  if (!permission) {
+  if (!hasPermission) {
     return (
       <View style={styles.container}>
         <ActivityIndicator size="large" color="#1e88e5" />
+        <Text style={styles.message}>Requesting camera permission...</Text>
+        <TouchableOpacity style={styles.button} onPress={requestPermission}>
+          <Text style={styles.buttonText}>Grant Permission</Text>
+        </TouchableOpacity>
       </View>
     );
   }
 
-  if (!permission.granted) {
+  if (!device) {
     return (
       <View style={styles.container}>
-        <Text style={styles.message}>
-          We need your permission to show the camera
-        </Text>
-        <Button onPress={requestPermission} title="Grant Permission" />
+        <ActivityIndicator size="large" color="#1e88e5" />
+        <Text style={styles.message}>No camera device found</Text>
+        <Text style={styles.message}>Make sure your emulator has a camera configured</Text>
+        <Text style={styles.message}>In Android Studio: Extended Controls → Camera → Webcam0</Text>
       </View>
     );
   }
-
-  function toggleCameraFacing() {
-    setFacing((current) => (current === "back" ? "front" : "back"));
-  }
-
 
   return (
     <View style={styles.container}>
-      <CameraView
-        ref={cameraRef}
+      <Camera
         style={styles.camera}
-        facing={facing}
-        onCameraReady={handleCameraReady}
+        device={device}
+        isActive={hasPermission && tfReady && !poseLoading}
+        frameProcessor={frameProcessor}
+        pixelFormat="rgb"
       />
 
-      {/* Always visible test overlay */}
-      <View style={{ position: 'absolute', top: 50, left: 10, backgroundColor: 'red', padding: 10, zIndex: 9999 }}>
-        <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold' }}>TEST OVERLAY</Text>
-        <Text style={{ color: 'white' }}>Pose: {pose ? 'YES' : 'NO'}</Text>
-        <Text style={{ color: 'white' }}>PoseLoading: {poseLoading ? 'YES' : 'NO'}</Text>
-        <Text style={{ color: 'white' }}>Keypoints: {pose?.keypoints?.length || 0}</Text>
-        <Text style={{ color: 'white' }}>Camera: {cameraDimensions.width}x{cameraDimensions.height}</Text>
-      </View>
-
-      {/* Debug info */}
-      {pose && (
-        <View style={{ position: 'absolute', top: 150, left: 10, backgroundColor: 'rgba(0,0,0,0.7)', padding: 10, zIndex: 999 }}>
-          <Text style={{ color: 'white' }}>Pose detected: {pose.keypoints.length} keypoints</Text>
-          <Text style={{ color: 'white' }}>Camera: {cameraDimensions.width}x{cameraDimensions.height}</Text>
-          <Text style={{ color: 'white' }}>Loading: {poseLoading ? 'yes' : 'no'}</Text>
-          <Text style={{ color: 'white' }}>Sample KP: {pose.keypoints[0]?.name} at ({pose.keypoints[0]?.x?.toFixed(1)}, {pose.keypoints[0]?.y?.toFixed(1)})</Text>
-        </View>
-      )}
-
-      {/* Simple test overlay - always render */}
-      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(255,0,0,0.1)', zIndex: 1000, pointerEvents: 'none' }}>
-        <View style={{ position: 'absolute', top: 100, left: 100, width: 50, height: 50, backgroundColor: 'blue' }} />
-      </View>
-
-      {/* Pose Overlay */}
-      {pose && !poseLoading && (
+      {/* POSE OVERLAY - REAL-TIME VECTORS */}
+      {pose && pose.keypoints && pose.keypoints.length > 0 && (
         <PoseOverlay
           keypoints={pose.keypoints}
           shoulderAngles={shoulderAngles}
@@ -166,7 +128,7 @@ export default function CameraViewScreen() {
         <View style={styles.loadingOverlay}>
           <ActivityIndicator size="large" color="#ffffff" />
           <Text style={styles.loadingText}>
-            {!tfReady ? "Initializing TensorFlow.js..." : "Loading MoveNet model (first time only)..."}
+            {!tfReady ? "Initializing TensorFlow.js..." : "Loading MoveNet model..."}
           </Text>
         </View>
       )}
@@ -174,18 +136,8 @@ export default function CameraViewScreen() {
       {/* Error Display */}
       {poseError && (
         <View style={styles.errorOverlay}>
-          <Text style={styles.errorText}>⚠️ Native Build Required</Text>
-          <Text style={styles.errorSubtext}>
-            {poseError.includes('native build')
-              ? 'This feature requires a development build with native code. Expo Go does not support native modules.'
-              : poseError}
-          </Text>
-          <Text style={styles.errorInstructions}>
-            To fix this, run:{'\n'}
-            {'\n'}1. npx expo prebuild{'\n'}
-            2. npx expo run:android{'\n'}
-            {'\n'}Or: npx expo run:ios
-          </Text>
+          <Text style={styles.errorText}>⚠️ Error</Text>
+          <Text style={styles.errorSubtext}>{poseError}</Text>
         </View>
       )}
 
@@ -197,14 +149,10 @@ export default function CameraViewScreen() {
               {side === "links" ? "Linke" : "Rechte"} {joint} - {movement}
             </Text>
             {shoulderAngles.left !== null && (
-              <Text style={styles.angleText}>
-                Left Shoulder: {shoulderAngles.left.toFixed(1)}°
-              </Text>
+              <Text style={styles.angleText}>Left: {shoulderAngles.left.toFixed(1)}°</Text>
             )}
             {shoulderAngles.right !== null && (
-              <Text style={styles.angleText}>
-                Right Shoulder: {shoulderAngles.right.toFixed(1)}°
-              </Text>
+              <Text style={styles.angleText}>Right: {shoulderAngles.right.toFixed(1)}°</Text>
             )}
           </View>
         )}
@@ -212,8 +160,8 @@ export default function CameraViewScreen() {
 
       {/* Controls */}
       <View style={styles.buttonContainer}>
-        <TouchableOpacity style={styles.button} onPress={toggleCameraFacing}>
-          <Text style={styles.text}>Flip Camera</Text>
+        <TouchableOpacity style={styles.button} onPress={() => setFacing(f => f === 'back' ? 'front' : 'back')}>
+          <Text style={styles.buttonText}>Flip Camera</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -228,6 +176,7 @@ const styles = StyleSheet.create({
   message: {
     textAlign: "center",
     paddingBottom: 10,
+    color: "#000",
   },
   camera: {
     flex: 1,
@@ -243,9 +192,12 @@ const styles = StyleSheet.create({
   button: {
     flex: 1,
     alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.5)",
+    padding: 12,
+    borderRadius: 8,
   },
-  text: {
-    fontSize: 24,
+  buttonText: {
+    fontSize: 16,
     fontWeight: "bold",
     color: "white",
   },
@@ -280,15 +232,6 @@ const styles = StyleSheet.create({
   errorSubtext: {
     color: "#ffffff",
     fontSize: 14,
-    marginBottom: 12,
-  },
-  errorInstructions: {
-    color: "#ffffff",
-    fontSize: 12,
-    fontFamily: "monospace",
-    backgroundColor: "rgba(0, 0, 0, 0.3)",
-    padding: 8,
-    borderRadius: 4,
   },
   infoContainer: {
     position: "absolute",
