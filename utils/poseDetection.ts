@@ -5,59 +5,21 @@ import './tfjsSetup';
 // Now import TensorFlow.js - it should detect browser/React Native environment
 import * as tf from '@tensorflow/tfjs';
 import * as poseDetection from '@tensorflow-models/pose-detection';
+import { KEYPOINT_NAMES, MOVENET_KEYPOINT_NAMES, KeypointName, Keypoint, Pose } from './keypoints';
 
-// MoveNet keypoint indices (17 keypoints)
-export const KEYPOINT_NAMES = [
-  'nose',
-  'left_eye',
-  'right_eye',
-  'left_ear',
-  'right_ear',
-  'left_shoulder',
-  'right_shoulder',
-  'left_elbow',
-  'right_elbow',
-  'left_wrist',
-  'right_wrist',
-  'left_hip',
-  'right_hip',
-  'left_knee',
-  'right_knee',
-  'left_ankle',
-  'right_ankle',
-] as const;
-
-export type KeypointName = typeof KEYPOINT_NAMES[number];
-
-export interface Keypoint {
-  x: number;
-  y: number;
-  score: number;
-  name: KeypointName;
-}
-
-export interface Pose {
-  keypoints: Keypoint[];
-  score: number;
-}
-
-export interface ShoulderAngle {
-  left: number | null;
-  right: number | null;
-}
+// Re-export types and constants for backward compatibility
+export type { KeypointName, Keypoint, Pose } from './keypoints';
+export { KEYPOINT_NAMES } from './keypoints';
 
 export class PoseDetector {
   private detector: poseDetection.PoseDetector | null = null;
   private isInitialized = false;
 
   async initialize(): Promise<void> {
-    try {
-      console.log('Initializing TensorFlow.js...');
-      
+    try {     
       // Initialize TensorFlow.js for React Native
       // @tensorflow/tfjs-react-native handles all the platform setup
       await tf.ready();
-      console.log('TensorFlow.js ready');
 
       // Create MoveNet detector
       console.log('Loading MoveNet Lightning model...');
@@ -77,7 +39,10 @@ export class PoseDetector {
     }
   }
 
-  async detectPose(imageInput: tf.Tensor3D | string | ImageData | HTMLImageElement | HTMLCanvasElement | HTMLVideoElement | { data: Uint32Array; width: number; height: number }, options?: { width?: number; height?: number }): Promise<Pose | null> {
+  async detectPose(
+    imageInput: tf.Tensor3D | string | ImageData | HTMLImageElement | HTMLCanvasElement | HTMLVideoElement | { data: Uint32Array; width: number; height: number },
+    options?: { width?: number; height?: number }
+  ): Promise<Pose | null> {
     if (!this.detector || !this.isInitialized) {
       return null;
     }
@@ -93,20 +58,14 @@ export class PoseDetector {
         imageHeight = options?.height || shape[0];
         imageWidth = options?.width || shape[1];
       } else if (typeof imageInput === 'object' && 'width' in imageInput && 'height' in imageInput) {
-        imageWidth = imageInput.width;
-        imageHeight = imageInput.height;
-      } else if (imageInput instanceof HTMLImageElement || imageInput instanceof HTMLVideoElement) {
-        imageWidth = imageInput.width;
-        imageHeight = imageInput.height;
-      } else if (imageInput instanceof HTMLCanvasElement) {
-        imageWidth = imageInput.width;
-        imageHeight = imageInput.height;
-      } else if (imageInput instanceof ImageData) {
-        imageWidth = imageInput.width;
-        imageHeight = imageInput.height;
+        // We need to avoid type errors due to usage of DOM classes like HTMLImageElement and HTMLCanvasElement
+        // which may not be available in all environments (like React Native).
+        // Safer duck-typing approach:
+        // Use duck-typing to get width/height safely, avoiding instanceof errors in non-browser environments
+        imageWidth = (imageInput as { width: number }).width;
+        imageHeight = (imageInput as { height: number }).height;
       }
       
-      // Run pose detection - TensorFlow.js pose-detection accepts tensor input
       const poses = await this.detector.estimatePoses(imageInput as any);
       
       if (!poses || poses.length === 0) {
@@ -121,27 +80,6 @@ export class PoseDetector {
         firstKeypoint: pose.keypoints[0],
         imageDimensions: { width: imageWidth, height: imageHeight },
       });
-      
-      // MoveNet keypoint name mapping (MoveNet uses these exact names)
-      const MOVENET_KEYPOINT_NAMES = [
-        'nose',
-        'left_eye',
-        'right_eye',
-        'left_ear',
-        'right_ear',
-        'left_shoulder',
-        'right_shoulder',
-        'left_elbow',
-        'right_elbow',
-        'left_wrist',
-        'right_wrist',
-        'left_hip',
-        'right_hip',
-        'left_knee',
-        'right_knee',
-        'left_ankle',
-        'right_ankle',
-      ];
       
       // Convert to our format
       // MoveNet returns normalized coordinates (0-1), convert to pixels

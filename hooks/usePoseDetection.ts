@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { PoseDetector, Pose } from '../utils/poseDetection';
-import { calculateBothShoulderAngles, ShoulderAngle } from '../utils/shoulderAngles';
+import { PoseDetector } from '../utils/poseDetection';
+import { Pose, ShoulderAngle } from '../utils/keypoints';
+import { calculateBothShoulderAngles,  } from '../utils/shoulderAngles';
 import * as tf from '@tensorflow/tfjs';
 import * as FileSystem from 'expo-file-system';
 import * as jpeg from 'jpeg-js';

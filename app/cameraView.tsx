@@ -29,7 +29,6 @@ export default function CameraViewScreen() {
       try {
         await tf.ready();
         setTfReady(true);
-        console.log("✅ TensorFlow.js ready");
       } catch (error) {
         console.error("❌ TensorFlow.js initialization error:", error);
       }
@@ -50,12 +49,12 @@ export default function CameraViewScreen() {
   // Capture frame from camera and process with TensorFlow.js
   const captureFrame = useCallback(async () => {
     console.log('captureFrame called:', { hasCamera: !!cameraRef.current, processing: frameProcessingRef.current, hasProcessFrame: !!processFrame });
-    
+
     if (!cameraRef.current || frameProcessingRef.current || !processFrame) {
       console.log('captureFrame: Skipping - camera:', !!cameraRef.current, 'processing:', frameProcessingRef.current, 'processFrame:', !!processFrame);
       return;
     }
-    
+
     frameProcessingRef.current = true;
     try {
       console.log('captureFrame: Taking picture...');
@@ -67,12 +66,12 @@ export default function CameraViewScreen() {
         // Note: expo-camera doesn't support direct resolution control,
         // but lower quality helps reduce file size
       });
-      
+
       console.log('captureFrame: Photo taken:', { uri: photo?.uri?.substring(0, 50), width: photo?.width, height: photo?.height });
-      
+
       if (photo) {
         setCameraDimensions({ width: photo.width || SCREEN_WIDTH, height: photo.height || SCREEN_HEIGHT });
-        
+
         // Process the image URI with TensorFlow.js
         console.log('captureFrame: Calling processFrame...');
         await processFrame(photo.uri);
@@ -118,7 +117,6 @@ export default function CameraViewScreen() {
     setFacing((current) => (current === "back" ? "front" : "back"));
   }
 
-  const isLoading = !tfReady || poseLoading;
 
   return (
     <View style={styles.container}>
@@ -128,7 +126,7 @@ export default function CameraViewScreen() {
         facing={facing}
         onCameraReady={handleCameraReady}
       />
-      
+
       {/* Always visible test overlay */}
       <View style={{ position: 'absolute', top: 50, left: 10, backgroundColor: 'red', padding: 10, zIndex: 9999 }}>
         <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold' }}>TEST OVERLAY</Text>
@@ -137,7 +135,7 @@ export default function CameraViewScreen() {
         <Text style={{ color: 'white' }}>Keypoints: {pose?.keypoints?.length || 0}</Text>
         <Text style={{ color: 'white' }}>Camera: {cameraDimensions.width}x{cameraDimensions.height}</Text>
       </View>
-      
+
       {/* Debug info */}
       {pose && (
         <View style={{ position: 'absolute', top: 150, left: 10, backgroundColor: 'rgba(0,0,0,0.7)', padding: 10, zIndex: 999 }}>
@@ -147,12 +145,12 @@ export default function CameraViewScreen() {
           <Text style={{ color: 'white' }}>Sample KP: {pose.keypoints[0]?.name} at ({pose.keypoints[0]?.x?.toFixed(1)}, {pose.keypoints[0]?.y?.toFixed(1)})</Text>
         </View>
       )}
-      
+
       {/* Simple test overlay - always render */}
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(255,0,0,0.1)', zIndex: 1000, pointerEvents: 'none' }}>
         <View style={{ position: 'absolute', top: 100, left: 100, width: 50, height: 50, backgroundColor: 'blue' }} />
       </View>
-      
+
       {/* Pose Overlay */}
       {pose && !poseLoading && (
         <PoseOverlay
@@ -178,7 +176,7 @@ export default function CameraViewScreen() {
         <View style={styles.errorOverlay}>
           <Text style={styles.errorText}>⚠️ Native Build Required</Text>
           <Text style={styles.errorSubtext}>
-            {poseError.includes('native build') 
+            {poseError.includes('native build')
               ? 'This feature requires a development build with native code. Expo Go does not support native modules.'
               : poseError}
           </Text>

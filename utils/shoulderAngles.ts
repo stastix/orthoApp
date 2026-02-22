@@ -1,4 +1,4 @@
-import { Keypoint, ShoulderAngle, KEYPOINT_NAMES } from './poseDetection';
+import { Keypoint, ShoulderAngle } from './keypoints';
 
 /**
  * Calculate the angle between three points in degrees
@@ -158,4 +158,23 @@ export function analyzeShoulderMovement(
     range,
   };
 }
+ export const CONNECTIONS: Array<[string, string]> = [
+  ['left_shoulder', 'right_shoulder'],
+  ['left_shoulder', 'left_elbow'],
+  ['left_elbow', 'left_wrist'],
+  ['right_shoulder', 'right_elbow'],
+  ['right_elbow', 'right_wrist'],
+  ['left_shoulder', 'left_hip'],
+  ['right_shoulder', 'right_hip'],
+  ['left_hip', 'right_hip'],
+  ['left_hip', 'left_knee'],
+  ['left_knee', 'left_ankle'],
+  ['right_hip', 'right_knee'],
+  ['right_knee', 'right_ankle'],
+  ['left_shoulder', 'left_ear'],
+  ['right_shoulder', 'right_ear'],
+  ['left_ear', 'nose'],
+  ['right_ear', 'nose'],
+];
 
+ 

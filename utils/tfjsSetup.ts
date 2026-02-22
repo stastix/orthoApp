@@ -1,63 +1,59 @@
-// CRITICAL: This file MUST be imported before any TensorFlow.js imports
-// It sets up the React Native environment so TensorFlow.js uses the browser platform
+/**
+ * TensorFlow.js React Native Environment Setup
+ * 
+ * This file MUST be imported before any TensorFlow.js imports.
+ * It configures the React Native environment to work with TensorFlow.js
+ * by setting up browser-like globals that TensorFlow.js expects.
+ */
 
-// Force browser platform for TensorFlow.js (not Node.js)
-if (typeof global !== 'undefined') {
-  // CRITICAL: Set process.browser = true FIRST
-  // This must happen before any TensorFlow.js code runs
-  if (typeof global.process === 'undefined') {
-    // @ts-ignore
-    global.process = { 
-      env: {}, 
-      platform: 'react-native',
-      browser: true,
-      versions: {},
-      type: 'browser'
-    };
-  } else {
-    // @ts-ignore
-    global.process.browser = true;
-    // @ts-ignore
-    global.process.type = 'browser';
-    // @ts-ignore
-    global.process.platform = 'react-native';
-    // Remove Node.js version to prevent Node.js detection
-    // @ts-ignore
-    if (global.process.versions) {
-      // @ts-ignore
-      delete global.process.versions.node;
-    }
-  }
+// Type-safe wrapper for global modifications
+const g = global as unknown as Record<string, unknown> & {
+  process?: {
+    browser?: boolean;
+    type?: string;
+    platform?: string;
+    versions?: Record<string, string>;
+  };
+  window?: typeof globalThis;
+  document?: {
+    createElement: () => Record<string, never>;
+  };
+  fetch?: typeof fetch;
+};
+
+// Configure process for browser-like environment
+if (g.process) {
+  g.process.browser = true;
+  g.process.type = 'browser';
+  // Use type assertion for platform since React Native isn't in Node's type definitions
+  (g.process as { platform?: string }).platform = 'react-native';
   
-  // Set up fetch - React Native has it, but TensorFlow.js needs it on global
-  if (typeof global.fetch === 'undefined') {
-    if (typeof fetch !== 'undefined') {
-      // @ts-ignore
-      global.fetch = fetch;
-    }
-  }
-  
-  // Set up window for browser-like environment
-  if (typeof global.window === 'undefined') {
-    // @ts-ignore
-    global.window = global;
-  }
-  
-  // Ensure fetch is on window too
-  if (typeof global.window !== 'undefined' && typeof global.window.fetch === 'undefined') {
-    // @ts-ignore
-    global.window.fetch = global.fetch || fetch;
-  }
-  
-  // Set up document-like object (some TensorFlow.js code checks for this)
-  if (typeof global.document === 'undefined') {
-    // @ts-ignore
-    global.document = {
-      createElement: () => ({}),
-    };
+  // Remove Node.js version to prevent Node.js detection
+  if (g.process.versions) {
+    const versions = { ...g.process.versions };
+    delete versions.node;
+    g.process.versions = versions;
   }
 }
 
-// Export nothing - this file is just for side effects
-export {};
+// Set up fetch on global if not already present
+if (typeof g.fetch === 'undefined' && typeof fetch !== 'undefined') {
+  g.fetch = fetch;
+}
 
+// Set up window reference for browser-like environment
+if (typeof g.window === 'undefined') {
+  g.window = global as unknown as typeof globalThis;
+}
+
+// Ensure fetch is available on window
+if (g.window && typeof (g.window as { fetch?: typeof fetch }).fetch === 'undefined') {
+  (g.window as { fetch?: typeof fetch }).fetch = g.fetch || (typeof fetch !== 'undefined' ? fetch : undefined);
+}
+
+// Set up minimal document-like object for compatibility
+if (typeof g.document === 'undefined') {
+  g.document = {
+    createElement: () => ({}),
+  } as { createElement: () => Record<string, never> };
+}
