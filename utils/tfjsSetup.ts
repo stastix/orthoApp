@@ -3,57 +3,50 @@
  * 
  * This file MUST be imported before any TensorFlow.js imports.
  * It configures the React Native environment to work with TensorFlow.js
- * by setting up browser-like globals that TensorFlow.js expects.
+ * by setting up the React Native backend.
  */
 
-// Type-safe wrapper for global modifications
-const g = global as unknown as Record<string, unknown> & {
-  process?: {
-    browser?: boolean;
-    type?: string;
-    platform?: string;
-    versions?: Record<string, string>;
-  };
-  window?: typeof globalThis;
-  document?: {
-    createElement: () => Record<string, never>;
-  };
-  fetch?: typeof fetch;
-};
+import '@tensorflow/tfjs-react-native';
+import * as tf from '@tensorflow/tfjs';
 
-// Configure process for browser-like environment
-if (g.process) {
-  g.process.browser = true;
-  g.process.type = 'browser';
-  // Use type assertion for platform since React Native isn't in Node's type definitions
-  (g.process as { platform?: string }).platform = 'react-native';
-  
-  // Remove Node.js version to prevent Node.js detection
-  if (g.process.versions) {
-    const versions = { ...g.process.versions };
-    delete versions.node;
-    g.process.versions = versions;
+// Initialize React Native backend
+let backendInitialized = false;
+
+export async function initializeTensorFlow() {
+  if (backendInitialized) {
+    return;
+  }
+
+  try {
+    // Set environment flags
+    tf.env().set('WEBGL_PACK', false);
+    tf.env().set('WEBGL_FORCE_F16_TEXTURES', false);
+    tf.env().set('WEBGL_PACK_DEPTHWISECONV', false);
+    
+    // Wait for TensorFlow.js to be ready
+    // @tensorflow/tfjs-react-native automatically sets up the correct backend
+    await tf.ready();
+    
+    // Check which backend is active
+    const backend = tf.getBackend();
+    console.log(`TensorFlow.js backend: ${backend}`);
+    
+    // If somehow WebGL is selected, switch to CPU
+    if (backend === 'webgl' || backend === 'webgpu') {
+      console.warn('WebGL backend detected, switching to CPU');
+      await tf.setBackend('cpu');
+      await tf.ready();
+    }
+    
+    backendInitialized = true;
+    console.log('TensorFlow.js React Native backend initialized');
+  } catch (error) {
+    console.error('Failed to initialize TensorFlow.js:', error);
+    throw error;
   }
 }
 
-// Set up fetch on global if not already present
-if (typeof g.fetch === 'undefined' && typeof fetch !== 'undefined') {
-  g.fetch = fetch;
-}
-
-// Set up window reference for browser-like environment
-if (typeof g.window === 'undefined') {
-  g.window = global as unknown as typeof globalThis;
-}
-
-// Ensure fetch is available on window
-if (g.window && typeof (g.window as { fetch?: typeof fetch }).fetch === 'undefined') {
-  (g.window as { fetch?: typeof fetch }).fetch = g.fetch || (typeof fetch !== 'undefined' ? fetch : undefined);
-}
-
-// Set up minimal document-like object for compatibility
-if (typeof g.document === 'undefined') {
-  g.document = {
-    createElement: () => ({}),
-  } as { createElement: () => Record<string, never> };
-}
+// Auto-initialize on import
+initializeTensorFlow().catch(err => {
+  console.error('Auto-initialization failed:', err);
+});

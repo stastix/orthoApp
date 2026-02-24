@@ -5,6 +5,7 @@ import { usePoseDetection } from "../hooks/usePoseDetection";
 import PoseOverlay from "../components/PoseOverlay";
 import { Camera, useCameraDevice, useFrameProcessor, useCameraPermission } from "react-native-vision-camera";
 import { runOnJS } from "react-native-reanimated";
+import { initializeTensorFlow } from "../utils/tfjsSetup";
 import * as tf from '@tensorflow/tfjs';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
@@ -42,8 +43,11 @@ export default function CameraViewScreen() {
 
   // Initialize TensorFlow.js
   useEffect(() => {
-    tf.ready().then(() => {
+    initializeTensorFlow().then(() => {
+      return tf.ready();
+    }).then(() => {
       setTfReady(true);
+      console.log('TensorFlow.js ready');
     }).catch(err => {
       console.error('TensorFlow error:', err);
     });
@@ -70,13 +74,19 @@ export default function CameraViewScreen() {
       const width = frame.width;
       const height = frame.height;
 
+      // Convert ArrayBuffer to regular array for serialization
+      // ArrayBuffer can't be passed through runOnJS, so convert to array
+      const uint8Array = new Uint8Array(buffer);
+      const pixelArray = Array.from(uint8Array); // Convert to regular JS array
+
       // Update dimensions
       runOnJS(setCameraDimensions)({ width, height });
 
       // Process frame directly - MoveNet gets raw pixel data
-      runOnJS(processFrame)(buffer, width, height, frame.pixelFormat);
-    } catch {
-      // Silent fail in worklet
+      // Pass as regular array, will convert back to ArrayBuffer in processFrame
+      runOnJS(processFrame)(pixelArray, width, height, frame.pixelFormat);
+    } catch (e) {
+      runOnJS((err) => console.error('Frame processor error:', err))(e);
     }
   }, [processFrame]);
 
@@ -112,6 +122,19 @@ export default function CameraViewScreen() {
         frameProcessor={frameProcessor}
         pixelFormat="rgb"
       />
+
+      {/* DEBUG INFO */}
+      <View style={styles.debugContainer}>
+        <Text style={styles.debugText}>
+          TF Ready: {tfReady ? '✅' : '❌'} | Model: {poseLoading ? 'Loading...' : '✅'} | Frames: {frameCountRef.current}
+        </Text>
+        <Text style={styles.debugText}>
+          Pose: {pose ? `${pose.keypoints?.length || 0} keypoints` : 'None'} | Error: {poseError || 'None'}
+        </Text>
+        <Text style={styles.debugText}>
+          Camera: {cameraDimensions.width}x{cameraDimensions.height}
+        </Text>
+      </View>
 
       {/* POSE OVERLAY - REAL-TIME VECTORS */}
       {pose && pose.keypoints && pose.keypoints.length > 0 && (
@@ -255,5 +278,21 @@ const styles = StyleSheet.create({
     color: "#00ff00",
     fontSize: 14,
     marginTop: 4,
+  },
+  debugContainer: {
+    position: "absolute",
+    top: 10,
+    left: 10,
+    right: 10,
+    backgroundColor: "rgba(0, 0, 0, 0.8)",
+    padding: 8,
+    borderRadius: 4,
+    zIndex: 1000,
+  },
+  debugText: {
+    color: "#00ff00",
+    fontSize: 10,
+    fontFamily: "monospace",
+    marginBottom: 2,
   },
 });

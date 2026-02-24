@@ -19,13 +19,18 @@ export default function PoseOverlay({
   cameraWidth,
   cameraHeight,
 }: PoseOverlayProps) {
+  console.log(`🎨 PoseOverlay render: ${keypoints?.length || 0} keypoints, camera: ${cameraWidth}x${cameraHeight}`);
+  
   if (!keypoints || keypoints.length === 0) {
+    console.log('❌ PoseOverlay: No keypoints, returning null');
     return null;
   }
 
   // Scale factor to map camera coordinates to screen coordinates
   const scaleX = cameraWidth > 0 ? SCREEN_WIDTH / cameraWidth : 1;
   const scaleY = cameraHeight > 0 ? SCREEN_HEIGHT / cameraHeight : 1;
+  
+  console.log(`📐 Scale factors: X=${scaleX.toFixed(2)}, Y=${scaleY.toFixed(2)}`);
 
   const getKeypoint = (name: string): Keypoint | undefined => {
     return keypoints.find((kp) => kp.name === name && kp.score > 0.15);
@@ -36,6 +41,16 @@ export default function PoseOverlay({
   return (
     <View style={styles.overlay} pointerEvents="none">
       <Svg width={SCREEN_WIDTH} height={SCREEN_HEIGHT} style={styles.svg}>
+        {/* TEST: Always visible line to verify overlay is rendering */}
+        <Line
+          x1={50}
+          y1={50}
+          x2={200}
+          y2={200}
+          stroke="#ff00ff"
+          strokeWidth="5"
+        />
+        
         {/* Draw skeleton connections - THE VECTORS */}
         {CONNECTIONS.map(([start, end], index) => {
           const startKp = getKeypoint(start);
