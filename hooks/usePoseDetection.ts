@@ -57,62 +57,54 @@ export function usePoseDetection({
   // REAL-TIME: Process raw pixel buffer directly - NO JPEG, NO DISK I/O
   const processFrame = useCallback(
     async (pixelArray: number[] | Uint8Array, width: number, height: number, pixelFormat: string) => {
-      if (!detectorRef.current?.isInitialized) {
-        console.log('❌ processFrame: Detector not initialized');
-        return;
-      }
+      if (!detectorRef.current?.isInitialized) return;
 
       try {
-        // Convert array back to Uint8Array (worklets can't pass ArrayBuffer)
-        const pixels = pixelArray instanceof Uint8Array 
-          ? pixelArray 
+        const pixels = pixelArray instanceof Uint8Array
+          ? pixelArray
           : new Uint8Array(pixelArray);
-        
-        console.log(`🔄 processFrame: ${width}x${height}, format: ${pixelFormat}, pixels: ${pixels.length} bytes`);
+
         const totalPixels = width * height;
-        const expectedSize = totalPixels * 3; // RGB = 3 channels
-        
-        console.log(`📊 Buffer check: ${pixels.length} bytes, expected ${expectedSize} (${width}*${height}*3)`);
-        
-        if (pixels.length !== expectedSize) {
-          console.warn(`⚠️ processFrame: Buffer size mismatch. Expected ${expectedSize}, got ${pixels.length}`);
-          // Try to continue anyway if close
-          if (pixels.length < expectedSize * 0.9) {
-            return;
-          }
+        const expectedSize = totalPixels * 3;
+
+        if (pixels.length < expectedSize * 0.9) {
+          console.warn(`Buffer size mismatch: expected ${expectedSize}, got ${pixels.length}`);
+          return;
         }
-        
-        // Reshape pixels from flat array to [height, width, 3]
-        // Pixels are in RGB format: [R, G, B, R, G, B, ...]
-        const reshaped = new Float32Array(totalPixels * 3);
+
+        // Fix 3: Use int32, keep values in [0–255] range
+        const reshaped = new Int32Array(totalPixels * 3);
         for (let i = 0; i < totalPixels; i++) {
           const srcIdx = i * 3;
           if (srcIdx + 2 < pixels.length) {
-            reshaped[srcIdx] = pixels[srcIdx] / 255.0;     // R
-            reshaped[srcIdx + 1] = pixels[srcIdx + 1] / 255.0; // G
-            reshaped[srcIdx + 2] = pixels[srcIdx + 2] / 255.0; // B
+            reshaped[srcIdx]     = pixels[srcIdx];
+            reshaped[srcIdx + 1] = pixels[srcIdx + 1];
+            reshaped[srcIdx + 2] = pixels[srcIdx + 2];
           }
         }
-        
-        console.log(`📦 Creating tensor: [${height}, ${width}, 3]`);
-        // Create tensor: [height, width, 3]
-        const tensor = tf.tensor3d(reshaped, [height, width, 3]);
-        
-        // Resize to 256x256 (MoveNet optimal)
-        console.log(`📏 Resizing to 256x256...`);
+
+        // Fix 2: Build [1, 256, 256, 3] batched tensor directly
+        const tensor = tf.tensor3d(reshaped, [height, width, 3], 'int32');
         const resized = tf.image.resizeBilinear(tensor, [256, 256]);
         tensor.dispose();
-
-        // MoveNet detects pose
-        console.log(`🔍 Detecting pose...`);
-        const detectedPose = await detectorRef.current.detectPose(resized, { width: 256, height: 256 });
+        const resizedInt = resized.cast('int32');
         resized.dispose();
-        
-        if (detectedPose && detectedPose.keypoints && detectedPose.keypoints.length > 0) {
-          // Scale back to original size
+        const batched = resizedInt.expandDims(0) as tf.Tensor4D; // [1, 256, 256, 3]
+        resizedInt.dispose();
+
+        // Pass original dimensions so detectPose can skip its normalization logic
+        const detectedPose = await detectorRef.current.detectPose(batched, {
+          width: 256,
+          height: 256,
+        });
+        batched.dispose();
+
+        if (detectedPose?.keypoints?.length) {
+          // Fix 1: MoveNet already returns pixel coords in [0–256] space
+          // Scale from 256x256 back to original frame dimensions
           const scaleX = width / 256;
           const scaleY = height / 256;
-          
+
           const scaledPose: Pose = {
             keypoints: detectedPose.keypoints.map(kp => ({
               ...kp,
@@ -121,17 +113,14 @@ export function usePoseDetection({
             })),
             score: detectedPose.score,
           };
-          
-          console.log(`✅ Detected ${scaledPose.keypoints.length} keypoints, score: ${scaledPose.score.toFixed(3)}`);
-          console.log(`📍 Sample keypoint: ${scaledPose.keypoints[0]?.name} at (${scaledPose.keypoints[0]?.x.toFixed(1)}, ${scaledPose.keypoints[0]?.y.toFixed(1)})`);
+
           setPose(scaledPose);
           setShoulderAngles(calculateBothShoulderAngles(scaledPose.keypoints));
         } else {
-          console.log('❌ processFrame: No pose detected');
           setPose(null);
         }
       } catch (err) {
-        console.error('❌ processFrame error:', err);
+        console.error('processFrame error:', err);
         setPose(null);
       }
     },

@@ -55,7 +55,7 @@ export class PoseDetector {
   }
 
   async detectPose(
-    imageInput: tf.Tensor3D | string | ImageData | HTMLImageElement | HTMLCanvasElement | HTMLVideoElement | { data: Uint32Array; width: number; height: number },
+    imageInput: tf.Tensor3D | tf.Tensor4D | string | ImageData | HTMLImageElement | HTMLCanvasElement | HTMLVideoElement | { data: Uint32Array; width: number; height: number },
     options?: { width?: number; height?: number }
   ): Promise<Pose | null> {
     if (!this.detector || !this._isInitialized) {
@@ -90,35 +90,26 @@ export class PoseDetector {
 
       // Get the first (most confident) pose
       const pose = poses[0];
-      
-      console.log('Raw MoveNet pose:', {
-        keypointCount: pose.keypoints.length,
-        firstKeypoint: pose.keypoints[0],
-        imageDimensions: { width: imageWidth, height: imageHeight },
-      });
+
+      // Temporary: verify raw coords are pixel space, not normalized
+      console.log('Raw keypoint sample:', pose.keypoints[0]);
+      // Should look like: { x: 120, y: 45, score: 0.87, name: 'nose' }
+      // NOT like: { x: 0.47, y: 0.17, ... }  ← that would mean normalized
       
       // Convert to our format
-      // MoveNet returns normalized coordinates (0-1), convert to pixels
+      // Fix 1: Trust the coordinates as-is — already in pixel space
       const keypoints: Keypoint[] = pose.keypoints.map((kp, index) => {
-        // MoveNet keypoints have a 'name' property, use it if available, otherwise use index
         const rawName = (kp as any).name;
         const kpName = rawName || MOVENET_KEYPOINT_NAMES[index] || KEYPOINT_NAMES[index] || 'unknown';
-        
-        // MoveNet returns normalized coordinates (0-1) when given a tensor
-        // Convert to pixel coordinates in the tensor space
-        const pixelX = imageWidth > 0 ? kp.x * imageWidth : kp.x;
-        const pixelY = imageHeight > 0 ? kp.y * imageHeight : kp.y;
-        
-        const result = {
-          x: pixelX,
-          y: pixelY,
+
+        return {
+          x: kp.x,
+          y: kp.y,
           score: kp.score || 0,
-          name: (KEYPOINT_NAMES.includes(kpName as any) ? kpName : KEYPOINT_NAMES[index] || 'unknown') as KeypointName,
+          name: (KEYPOINT_NAMES.includes(kpName as any)
+            ? kpName
+            : KEYPOINT_NAMES[index] || 'unknown') as KeypointName,
         };
-        
-        // No debug logs - just return the keypoint
-        
-        return result;
       });
 
       // Calculate overall pose score
