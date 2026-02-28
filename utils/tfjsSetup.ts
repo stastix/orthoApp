@@ -1,15 +1,13 @@
 /**
- * TensorFlow.js React Native Environment Setup
- * 
- * This file MUST be imported before any TensorFlow.js imports.
- * It configures the React Native environment to work with TensorFlow.js
- * by setting up the React Native backend.
+ * TensorFlow.js Setup
+ * Uses CPU backend - compatible with React Native without tfjs-react-native
  */
 
-import '@tensorflow/tfjs-react-native';
-import * as tf from '@tensorflow/tfjs';
+import * as tf from "@tensorflow/tfjs";
+import "@tensorflow/tfjs-backend-cpu"; 
+import 'whatwg-fetch'; // you already have this in package.json
 
-// Initialize React Native backend
+
 let backendInitialized = false;
 
 export async function initializeTensorFlow() {
@@ -18,35 +16,22 @@ export async function initializeTensorFlow() {
   }
 
   try {
-    // Set environment flags
-    tf.env().set('WEBGL_PACK', false);
-    tf.env().set('WEBGL_FORCE_F16_TEXTURES', false);
-    tf.env().set('WEBGL_PACK_DEPTHWISECONV', false);
-    
-    // Wait for TensorFlow.js to be ready
-    // @tensorflow/tfjs-react-native automatically sets up the correct backend
+    // Force CPU backend - most compatible with React Native
+    await tf.setBackend("cpu");
     await tf.ready();
-    
-    // Check which backend is active
+
     const backend = tf.getBackend();
     console.log(`TensorFlow.js backend: ${backend}`);
-    
-    // If somehow WebGL is selected, switch to CPU
-    if (backend === 'webgl' || backend === 'webgpu') {
-      console.warn('WebGL backend detected, switching to CPU');
-      await tf.setBackend('cpu');
-      await tf.ready();
-    }
-    
+
     backendInitialized = true;
-    console.log('TensorFlow.js React Native backend initialized');
+    console.log("TensorFlow.js initialized successfully");
   } catch (error) {
-    console.error('Failed to initialize TensorFlow.js:', error);
+    console.error("Failed to initialize TensorFlow.js:", error);
     throw error;
   }
 }
 
 // Auto-initialize on import
-initializeTensorFlow().catch(err => {
-  console.error('Auto-initialization failed:', err);
+initializeTensorFlow().catch((err) => {
+  console.error("Auto-initialization failed:", err);
 });

@@ -1,12 +1,25 @@
-import { useState, useEffect, useRef } from "react";
-import { StyleSheet, Text, TouchableOpacity, View, ActivityIndicator, Dimensions, Alert } from "react-native";
+import { useState, useEffect, useRef, useMemo } from "react";
+import {
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+  ActivityIndicator,
+  Dimensions,
+  Alert,
+} from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { usePoseDetection } from "../hooks/usePoseDetection";
 import PoseOverlay from "../components/PoseOverlay";
-import { Camera, useCameraDevice, useFrameProcessor, useCameraPermission } from "react-native-vision-camera";
-import { runOnJS } from "react-native-reanimated";
+import {
+  Camera,
+  useCameraDevice,
+  useFrameProcessor,
+  useCameraPermission,
+} from "react-native-vision-camera";
+import { Worklets } from "react-native-worklets-core";
 import { initializeTensorFlow } from "../utils/tfjsSetup";
-import * as tf from '@tensorflow/tfjs';
+import * as tf from "@tensorflow/tfjs";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
@@ -17,8 +30,11 @@ export default function CameraViewScreen() {
     movement?: string;
   }>();
 
-  const [facing, setFacing] = useState<'front' | 'back'>('front');
-  const [cameraDimensions, setCameraDimensions] = useState({ width: SCREEN_WIDTH, height: SCREEN_HEIGHT });
+  const [facing, setFacing] = useState<"front" | "back">("front");
+  const [cameraDimensions, setCameraDimensions] = useState({
+    width: SCREEN_WIDTH,
+    height: SCREEN_HEIGHT,
+  });
   const [tfReady, setTfReady] = useState(false);
   const frameCountRef = useRef(0);
 
@@ -34,7 +50,7 @@ export default function CameraViewScreen() {
           Alert.alert(
             "Camera Permission Required",
             "This app needs camera access for pose detection. Please enable it in settings.",
-            [{ text: "OK" }]
+            [{ text: "OK" }],
           );
         }
       });
@@ -43,52 +59,82 @@ export default function CameraViewScreen() {
 
   // Initialize TensorFlow.js
   useEffect(() => {
-    initializeTensorFlow().then(() => {
-      return tf.ready();
-    }).then(() => {
-      setTfReady(true);
-      console.log('TensorFlow.js ready');
-    }).catch(err => {
-      console.error('TensorFlow error:', err);
-    });
+    initializeTensorFlow()
+      .then(() => {
+        return tf.ready();
+      })
+      .then(() => {
+        setTfReady(true);
+        console.log("TensorFlow.js ready");
+      })
+      .catch((err) => {
+        console.error("TensorFlow error:", err);
+      });
   }, []);
 
   // Initialize pose detection
-  const { pose, shoulderAngles, isLoading: poseLoading, error: poseError, processFrame } = usePoseDetection({
+  const {
+    pose,
+    shoulderAngles,
+    isLoading: poseLoading,
+    error: poseError,
+    processFrame,
+  } = usePoseDetection({
     enabled: tfReady,
   });
 
+  // create runOnJS wrappers once; memoize to avoid recreation on each render
+  const jsSetCameraDimensions = useMemo(
+    () => Worklets.createRunOnJS(setCameraDimensions),
+    [],
+  );
+  const jsProcessFrame = useMemo(
+    () => Worklets.createRunOnJS(processFrame),
+    [processFrame],
+  );
+  // use a simple string param to avoid passing Error objects across the bridge
+  const jsLogError = useMemo(
+    () =>
+      Worklets.createRunOnJS((msg: string) =>
+        console.error("Frame processor error:", msg),
+      ),
+    [],
+  );
+
   // REAL-TIME FRAME PROCESSOR - DIRECT PIXEL DATA, NO PHOTOS
-  const frameProcessor = useFrameProcessor((frame) => {
-    'worklet';
+  const frameProcessor = useFrameProcessor(
+    (frame) => {
+      "worklet";
 
-    try {
-      frameCountRef.current++;
-      // Process every 2nd frame (~15 FPS)
-      if (frameCountRef.current % 2 !== 0) {
-        return;
+      try {
+        frameCountRef.current++;
+        // Process every 2nd frame (~15 FPS)
+        if (frameCountRef.current % 2 !== 0) {
+          return;
+        }
+
+        // Get pixel data directly from frame - NO JPEG, NO DISK I/O
+        const buffer = frame.toArrayBuffer();
+        const width = frame.width;
+        const height = frame.height;
+
+        // Convert ArrayBuffer to regular array for serialization
+        // ArrayBuffer can't be passed through runOnJS, so convert to array
+        const uint8Array = new Uint8Array(buffer);
+        const pixelArray = Array.from(uint8Array); // Convert to regular JS array
+
+        // Update dimensions
+        jsSetCameraDimensions({ width, height });
+
+        // Process frame directly - MoveNet gets raw pixel data
+        // Pass as regular array, will convert back to ArrayBuffer in processFrame
+        jsProcessFrame(pixelArray, width, height, frame.pixelFormat);
+      } catch (e) {
+        jsLogError(String(e));
       }
-
-      // Get pixel data directly from frame - NO JPEG, NO DISK I/O
-      const buffer = frame.toArrayBuffer();
-      const width = frame.width;
-      const height = frame.height;
-
-      // Convert ArrayBuffer to regular array for serialization
-      // ArrayBuffer can't be passed through runOnJS, so convert to array
-      const uint8Array = new Uint8Array(buffer);
-      const pixelArray = Array.from(uint8Array); // Convert to regular JS array
-
-      // Update dimensions
-      runOnJS(setCameraDimensions)({ width, height });
-
-      // Process frame directly - MoveNet gets raw pixel data
-      // Pass as regular array, will convert back to ArrayBuffer in processFrame
-      runOnJS(processFrame)(pixelArray, width, height, frame.pixelFormat);
-    } catch (e) {
-      runOnJS((err) => console.error('Frame processor error:', err))(e);
-    }
-  }, [processFrame]);
+    },
+    [processFrame],
+  );
 
   if (!hasPermission) {
     return (
@@ -107,8 +153,12 @@ export default function CameraViewScreen() {
       <View style={styles.container}>
         <ActivityIndicator size="large" color="#1e88e5" />
         <Text style={styles.message}>No camera device found</Text>
-        <Text style={styles.message}>Make sure your emulator has a camera configured</Text>
-        <Text style={styles.message}>In Android Studio: Extended Controls → Camera → Webcam0</Text>
+        <Text style={styles.message}>
+          Make sure your emulator has a camera configured
+        </Text>
+        <Text style={styles.message}>
+          In Android Studio: Extended Controls → Camera → Webcam0
+        </Text>
       </View>
     );
   }
@@ -126,10 +176,12 @@ export default function CameraViewScreen() {
       {/* DEBUG INFO */}
       <View style={styles.debugContainer}>
         <Text style={styles.debugText}>
-          TF Ready: {tfReady ? '✅' : '❌'} | Model: {poseLoading ? 'Loading...' : '✅'} | Frames: {frameCountRef.current}
+          TF Ready: {tfReady ? "✅" : "❌"} | Model:{" "}
+          {poseLoading ? "Loading..." : "✅"} | Frames: {frameCountRef.current}
         </Text>
         <Text style={styles.debugText}>
-          Pose: {pose ? `${pose.keypoints?.length || 0} keypoints` : 'None'} | Error: {poseError || 'None'}
+          Pose: {pose ? `${pose.keypoints?.length || 0} keypoints` : "None"} |
+          Error: {poseError || "None"}
         </Text>
         <Text style={styles.debugText}>
           Camera: {cameraDimensions.width}x{cameraDimensions.height}
@@ -151,7 +203,9 @@ export default function CameraViewScreen() {
         <View style={styles.loadingOverlay}>
           <ActivityIndicator size="large" color="#ffffff" />
           <Text style={styles.loadingText}>
-            {!tfReady ? "Initializing TensorFlow.js..." : "Loading MoveNet model..."}
+            {!tfReady
+              ? "Initializing TensorFlow.js..."
+              : "Loading MoveNet model..."}
           </Text>
         </View>
       )}
@@ -172,10 +226,14 @@ export default function CameraViewScreen() {
               {side === "links" ? "Linke" : "Rechte"} {joint} - {movement}
             </Text>
             {shoulderAngles.left !== null && (
-              <Text style={styles.angleText}>Left: {shoulderAngles.left.toFixed(1)}°</Text>
+              <Text style={styles.angleText}>
+                Left: {shoulderAngles.left.toFixed(1)}°
+              </Text>
             )}
             {shoulderAngles.right !== null && (
-              <Text style={styles.angleText}>Right: {shoulderAngles.right.toFixed(1)}°</Text>
+              <Text style={styles.angleText}>
+                Right: {shoulderAngles.right.toFixed(1)}°
+              </Text>
             )}
           </View>
         )}
@@ -183,7 +241,10 @@ export default function CameraViewScreen() {
 
       {/* Controls */}
       <View style={styles.buttonContainer}>
-        <TouchableOpacity style={styles.button} onPress={() => setFacing(f => f === 'back' ? 'front' : 'back')}>
+        <TouchableOpacity
+          style={styles.button}
+          onPress={() => setFacing((f) => (f === "back" ? "front" : "back"))}
+        >
           <Text style={styles.buttonText}>Flip Camera</Text>
         </TouchableOpacity>
       </View>
