@@ -45,7 +45,8 @@
         {
           "cameraPermissionText": "$(PRODUCT_NAME) needs access to your Camera to detect poses in real-time."
         }
-      ]
+      ],
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true,

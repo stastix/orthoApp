@@ -9,7 +9,6 @@ import {
   Alert,
 } from "react-native";
 import { useLocalSearchParams } from "expo-router";
-import { usePoseDetection } from "../hooks/usePoseDetection";
 import PoseOverlay from "../components/PoseOverlay";
 import {
   Camera,
@@ -17,10 +16,10 @@ import {
   useFrameProcessor,
   useCameraPermission,
 } from "react-native-vision-camera";
+import { useTensorflowModel } from "react-native-fast-tflite";
+import { parsePoseOutput } from "../utils/poseDetection";
+import { Pose } from "../utils/keypoints";
 import { Worklets } from "react-native-worklets-core";
-import { initializeTensorFlow } from "../utils/tfjsSetup";
-import * as tf from "@tensorflow/tfjs";
-
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
 export default function CameraViewScreen() {
@@ -31,111 +30,57 @@ export default function CameraViewScreen() {
   }>();
 
   const [facing, setFacing] = useState<"front" | "back">("front");
+  const [pose, setPose] = useState<Pose | null>(null);
   const [cameraDimensions, setCameraDimensions] = useState({
     width: SCREEN_WIDTH,
     height: SCREEN_HEIGHT,
   });
-  const [tfReady, setTfReady] = useState(false);
   const frameCountRef = useRef(0);
 
-  // Request camera permission
   const { hasPermission, requestPermission } = useCameraPermission();
   const device = useCameraDevice(facing);
+  const model = useTensorflowModel(require("../assets/models/4.tflite"));
 
-  // Request permission on mount
   useEffect(() => {
     if (!hasPermission) {
       requestPermission().then((granted) => {
         if (!granted) {
           Alert.alert(
             "Camera Permission Required",
-            "This app needs camera access for pose detection. Please enable it in settings.",
+            "Please enable camera access in settings.",
             [{ text: "OK" }],
           );
         }
       });
     }
-  }, [hasPermission, requestPermission]);
+  }, [hasPermission]);
 
-  // Initialize TensorFlow.js
-  useEffect(() => {
-    initializeTensorFlow()
-      .then(() => {
-        return tf.ready();
-      })
-      .then(() => {
-        setTfReady(true);
-        console.log("TensorFlow.js ready");
-      })
-      .catch((err) => {
-        console.error("TensorFlow error:", err);
-      });
-  }, []);
-
-  // Initialize pose detection
-  const {
-    pose,
-    shoulderAngles,
-    isLoading: poseLoading,
-    error: poseError,
-    processFrame,
-  } = usePoseDetection({
-    enabled: tfReady,
-  });
-
-  // create runOnJS wrappers once; memoize to avoid recreation on each render
-  const jsSetCameraDimensions = useMemo(
+  const setPoseJS = useMemo(() => Worklets.createRunOnJS(setPose), []);
+  const setDimensionsJS = useMemo(
     () => Worklets.createRunOnJS(setCameraDimensions),
     [],
   );
-  const jsProcessFrame = useMemo(
-    () => Worklets.createRunOnJS(processFrame),
-    [processFrame],
-  );
-  // use a simple string param to avoid passing Error objects across the bridge
-  const jsLogError = useMemo(
-    () =>
-      Worklets.createRunOnJS((msg: string) =>
-        console.error("Frame processor error:", msg),
-      ),
-    [],
-  );
 
-  // REAL-TIME FRAME PROCESSOR - DIRECT PIXEL DATA, NO PHOTOS
   const frameProcessor = useFrameProcessor(
     (frame) => {
       "worklet";
+      if (model.state !== "loaded") return;
 
-      try {
-        frameCountRef.current++;
-        // Process every 2nd frame (~15 FPS)
-        if (frameCountRef.current % 2 !== 0) {
-          return;
-        }
+      frameCountRef.current++;
+      if (frameCountRef.current % 2 !== 0) return;
 
-        // Get pixel data directly from frame - NO JPEG, NO DISK I/O
-        const buffer = frame.toArrayBuffer();
-        const width = frame.width;
-        const height = frame.height;
+      const buffer = frame.toArrayBuffer();
+      const pixelData = new Uint8Array(buffer);
 
-        // Convert ArrayBuffer to regular array for serialization
-        // ArrayBuffer can't be passed through runOnJS, so convert to array
-        const uint8Array = new Uint8Array(buffer);
-        const pixelArray = Array.from(uint8Array); // Convert to regular JS array
-
-        // Update dimensions
-        jsSetCameraDimensions({ width, height });
-
-        // Process frame directly - MoveNet gets raw pixel data
-        // Pass as regular array, will convert back to ArrayBuffer in processFrame
-        jsProcessFrame(pixelArray, width, height, frame.pixelFormat);
-      } catch (e) {
-        jsLogError(String(e));
+      const outputs = model.model.runSync([pixelData]);
+      const result = parsePoseOutput(outputs[0] as Float32Array);
+      if (result) {
+        setPoseJS(result);
+        setDimensionsJS({ width: frame.width, height: frame.height });
       }
     },
-    [processFrame],
+    [model],
   );
-
   if (!hasPermission) {
     return (
       <View style={styles.container}>
@@ -151,95 +96,58 @@ export default function CameraViewScreen() {
   if (!device) {
     return (
       <View style={styles.container}>
-        <ActivityIndicator size="large" color="#1e88e5" />
         <Text style={styles.message}>No camera device found</Text>
-        <Text style={styles.message}>
-          Make sure your emulator has a camera configured
-        </Text>
-        <Text style={styles.message}>
-          In Android Studio: Extended Controls → Camera → Webcam0
-        </Text>
       </View>
     );
   }
+
+  const isReady = model.state === "loaded";
 
   return (
     <View style={styles.container}>
       <Camera
         style={styles.camera}
         device={device}
-        isActive={hasPermission && tfReady && !poseLoading}
+        isActive={hasPermission}
         frameProcessor={frameProcessor}
         pixelFormat="rgb"
       />
 
-      {/* DEBUG INFO */}
       <View style={styles.debugContainer}>
         <Text style={styles.debugText}>
-          TF Ready: {tfReady ? "✅" : "❌"} | Model:{" "}
-          {poseLoading ? "Loading..." : "✅"} | Frames: {frameCountRef.current}
+          Model: {model.state} | Frames: {frameCountRef.current}
         </Text>
         <Text style={styles.debugText}>
-          Pose: {pose ? `${pose.keypoints?.length || 0} keypoints` : "None"} |
-          Error: {poseError || "None"}
-        </Text>
-        <Text style={styles.debugText}>
-          Camera: {cameraDimensions.width}x{cameraDimensions.height}
+          Pose: {pose ? `${pose.keypoints?.length || 0} keypoints` : "None"}
         </Text>
       </View>
 
-      {/* POSE OVERLAY - REAL-TIME VECTORS */}
       {pose && pose.keypoints && pose.keypoints.length > 0 && (
         <PoseOverlay
           keypoints={pose.keypoints}
-          shoulderAngles={shoulderAngles}
+          shoulderAngles={{ left: null, right: null }}
           cameraWidth={cameraDimensions.width}
           cameraHeight={cameraDimensions.height}
         />
       )}
 
-      {/* Loading Indicator */}
-      {(poseLoading || !tfReady) && (
+      {!isReady && (
         <View style={styles.loadingOverlay}>
           <ActivityIndicator size="large" color="#ffffff" />
-          <Text style={styles.loadingText}>
-            {!tfReady
-              ? "Initializing TensorFlow.js..."
-              : "Loading MoveNet model..."}
-          </Text>
+          <Text style={styles.loadingText}>Loading MoveNet model...</Text>
         </View>
       )}
 
-      {/* Error Display */}
-      {poseError && (
-        <View style={styles.errorOverlay}>
-          <Text style={styles.errorText}>⚠️ Error</Text>
-          <Text style={styles.errorSubtext}>{poseError}</Text>
-        </View>
-      )}
-
-      {/* Info Display */}
       <View style={styles.infoContainer}>
         {joint && side && movement && (
           <View style={styles.infoBox}>
             <Text style={styles.infoText}>
               {side === "links" ? "Linke" : "Rechte"} {joint} - {movement}
             </Text>
-            {shoulderAngles.left !== null && (
-              <Text style={styles.angleText}>
-                Left: {shoulderAngles.left.toFixed(1)}°
-              </Text>
-            )}
-            {shoulderAngles.right !== null && (
-              <Text style={styles.angleText}>
-                Right: {shoulderAngles.right.toFixed(1)}°
-              </Text>
-            )}
           </View>
         )}
       </View>
 
-      {/* Controls */}
       <View style={styles.buttonContainer}>
         <TouchableOpacity
           style={styles.button}
@@ -253,18 +161,9 @@ export default function CameraViewScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: "center",
-  },
-  message: {
-    textAlign: "center",
-    paddingBottom: 10,
-    color: "#000",
-  },
-  camera: {
-    flex: 1,
-  },
+  container: { flex: 1, justifyContent: "center" },
+  message: { textAlign: "center", paddingBottom: 10, color: "#000" },
+  camera: { flex: 1 },
   buttonContainer: {
     position: "absolute",
     bottom: 64,
@@ -280,43 +179,15 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 8,
   },
-  buttonText: {
-    fontSize: 16,
-    fontWeight: "bold",
-    color: "white",
-  },
+  buttonText: { fontSize: 16, fontWeight: "bold", color: "white" },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0, 0, 0, 0.7)",
+    backgroundColor: "rgba(0,0,0,0.7)",
     justifyContent: "center",
     alignItems: "center",
     zIndex: 10,
   },
-  loadingText: {
-    color: "#ffffff",
-    marginTop: 16,
-    fontSize: 16,
-  },
-  errorOverlay: {
-    position: "absolute",
-    top: 100,
-    left: 20,
-    right: 20,
-    backgroundColor: "rgba(255, 0, 0, 0.8)",
-    padding: 16,
-    borderRadius: 8,
-    zIndex: 10,
-  },
-  errorText: {
-    color: "#ffffff",
-    fontSize: 16,
-    fontWeight: "bold",
-    marginBottom: 8,
-  },
-  errorSubtext: {
-    color: "#ffffff",
-    fontSize: 14,
-  },
+  loadingText: { color: "#ffffff", marginTop: 16, fontSize: 16 },
   infoContainer: {
     position: "absolute",
     top: 60,
@@ -324,28 +195,14 @@ const styles = StyleSheet.create({
     right: 20,
     zIndex: 5,
   },
-  infoBox: {
-    backgroundColor: "rgba(0, 0, 0, 0.6)",
-    padding: 12,
-    borderRadius: 8,
-  },
-  infoText: {
-    color: "#ffffff",
-    fontSize: 16,
-    fontWeight: "600",
-    marginBottom: 8,
-  },
-  angleText: {
-    color: "#00ff00",
-    fontSize: 14,
-    marginTop: 4,
-  },
+  infoBox: { backgroundColor: "rgba(0,0,0,0.6)", padding: 12, borderRadius: 8 },
+  infoText: { color: "#ffffff", fontSize: 16, fontWeight: "600" },
   debugContainer: {
     position: "absolute",
     top: 10,
     left: 10,
     right: 10,
-    backgroundColor: "rgba(0, 0, 0, 0.8)",
+    backgroundColor: "rgba(0,0,0,0.8)",
     padding: 8,
     borderRadius: 4,
     zIndex: 1000,
