@@ -3,10 +3,11 @@
  * Uses CPU backend - compatible with React Native without tfjs-react-native
  */
 
-import * as tf from "@tensorflow/tfjs";
-import "@tensorflow/tfjs-backend-cpu"; 
-import 'whatwg-fetch'; // you already have this in package.json
+// Polyfill fetch for TensorFlow.js (React Native)
 
+import * as tf from "@tensorflow/tfjs-react-native";
+import "@tensorflow/tfjs-backend-cpu";
+import "whatwg-fetch"; // already included in package.json
 
 let backendInitialized = false;
 
@@ -16,12 +17,22 @@ export async function initializeTensorFlow() {
   }
 
   try {
-    // Force CPU backend - most compatible with React Native
-    await tf.setBackend("cpu");
+    // Prefer GPU backend (rn-webgl) if available, otherwise fall back to CPU.
     await tf.ready();
+    if (
+      await tf
+        .setBackend("rn-webgl")
+        .then(() => true)
+        .catch(() => false)
+    ) {
+      console.log("TensorFlow.js backend set to rn-webgl (GPU)");
+    } else {
+      await tf.setBackend("cpu");
+      console.log("TensorFlow.js backend set to cpu (no GPU available)");
+    }
 
     const backend = tf.getBackend();
-    console.log(`TensorFlow.js backend: ${backend}`);
+    console.log(`TensorFlow.js backend active: ${backend}`);
 
     backendInitialized = true;
     console.log("TensorFlow.js initialized successfully");
