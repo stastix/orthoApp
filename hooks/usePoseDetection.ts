@@ -27,17 +27,20 @@ export function usePoseDetection() {
       "worklet";
       if (model.state !== "loaded" || !model.model) return;
 
-      console.log(`Received a ${frame.width} x ${frame.height} Frame!`);
-
       frameCountRef.current++;
       if (frameCountRef.current % 2 !== 0) return;
 
       const resized = resize(frame, 192, 192);
       const outputs = model.model.runSync([resized]);
-      console.log(`Received ${outputs.length} outputs!`);
 
       const result = parsePoseOutput(outputs[0] as Float32Array);
       if (result) {
+        const shoulders = result.keypoints.filter(
+          (kp) => kp.name === "left_shoulder" || kp.name === "right_shoulder",
+        );
+        console.log("cam:", frame.width, "x", frame.height);
+        console.log("shoulders:", JSON.stringify(shoulders));
+
         setPoseJS(result);
         setDimensionsJS({ width: frame.width, height: frame.height });
       }
