@@ -1,10 +1,10 @@
-import React from 'react';
-import { View, StyleSheet, Dimensions } from 'react-native';
-import Svg, { Circle, Line, Text as SvgText } from 'react-native-svg';
-import { Keypoint, ShoulderAngle } from '../utils/keypoints';
-import { CONNECTIONS } from '@/utils/shoulderAngles';
+import React from "react";
+import { View, StyleSheet, Dimensions } from "react-native";
+import Svg, { Circle, Line, Text as SvgText } from "react-native-svg";
+import { Keypoint, ShoulderAngle } from "../utils/keypoints";
+import { CONNECTIONS } from "@/utils/shoulderAngles";
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
 interface PoseOverlayProps {
   keypoints: Keypoint[];
@@ -19,19 +19,20 @@ export default function PoseOverlay({
   cameraWidth,
   cameraHeight,
 }: PoseOverlayProps) {
-  console.log(`🎨 PoseOverlay render: ${keypoints?.length || 0} keypoints, camera: ${cameraWidth}x${cameraHeight}`);
-  
   if (!keypoints || keypoints.length === 0) {
-    console.log('❌ PoseOverlay: No keypoints, returning null');
     return null;
   }
 
   // Scale factor to map camera coordinates to screen coordinates
-  const scaleX = cameraWidth > 0 ? SCREEN_WIDTH / cameraWidth : 1;
-  const scaleY = cameraHeight > 0 ? SCREEN_HEIGHT / cameraHeight : 1;
-  
-  console.log(`📐 Scale factors: X=${scaleX.toFixed(2)}, Y=${scaleY.toFixed(2)}`);
+  // Camera outputs landscape frames on portrait phone - swap axes
+  const isRotated = cameraWidth > cameraHeight;
 
+  const scaleX = isRotated ? SCREEN_WIDTH : SCREEN_WIDTH;
+  const scaleY = isRotated ? SCREEN_HEIGHT : SCREEN_HEIGHT;
+
+  const mapX = (x: number, y: number) => (isRotated ? y : x) * SCREEN_WIDTH;
+  const mapY = (x: number, y: number) =>
+    (isRotated ? 1 - x : y) * SCREEN_HEIGHT;
   const getKeypoint = (name: string): Keypoint | undefined => {
     return keypoints.find((kp) => kp.name === name && kp.score > 0.15);
   };
@@ -50,7 +51,7 @@ export default function PoseOverlay({
           stroke="#ff00ff"
           strokeWidth="5"
         />
-        
+
         {/* Draw skeleton connections - THE VECTORS */}
         {CONNECTIONS.map(([start, end], index) => {
           const startKp = getKeypoint(start);
@@ -61,10 +62,10 @@ export default function PoseOverlay({
           return (
             <Line
               key={`connection-${index}`}
-              x1={startKp.x * scaleX}
-              y1={startKp.y * scaleY}
-              x2={endKp.x * scaleX}
-              y2={endKp.y * scaleY}
+              x1={mapX(startKp.x, startKp.y)}
+              y1={mapY(startKp.x, startKp.y)}
+              x2={mapX(endKp.x, endKp.y)}
+              y2={mapY(endKp.x, endKp.y)}
               stroke="#00ff00"
               strokeWidth="4"
             />
@@ -73,29 +74,33 @@ export default function PoseOverlay({
 
         {/* Draw keypoints */}
         {visibleKeypoints.map((keypoint) => {
-          const isShoulder = keypoint.name === 'left_shoulder' || keypoint.name === 'right_shoulder';
-          const isElbow = keypoint.name === 'left_elbow' || keypoint.name === 'right_elbow';
-          const isWrist = keypoint.name === 'left_wrist' || keypoint.name === 'right_wrist';
+          const isShoulder =
+            keypoint.name === "left_shoulder" ||
+            keypoint.name === "right_shoulder";
+          const isElbow =
+            keypoint.name === "left_elbow" || keypoint.name === "right_elbow";
+          const isWrist =
+            keypoint.name === "left_wrist" || keypoint.name === "right_wrist";
 
-          let color = '#00ff00';
+          let color = "#00ff00";
           let radius = 5;
 
           if (isShoulder) {
-            color = '#ff0000';
+            color = "#ff0000";
             radius = 8;
           } else if (isElbow) {
-            color = '#ffff00';
+            color = "#ffff00";
             radius = 6;
           } else if (isWrist) {
-            color = '#00ffff';
+            color = "#00ffff";
             radius = 6;
           }
 
           return (
             <Circle
               key={keypoint.name}
-              cx={keypoint.x * scaleX}
-              cy={keypoint.y * scaleY}
+              cx={mapX(keypoint.x, keypoint.y)}
+              cy={mapY(keypoint.x, keypoint.y)}
               r={radius}
               fill={color}
               stroke="#ffffff"

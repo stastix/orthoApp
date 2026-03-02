@@ -1,11 +1,10 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect } from "react";
 import {
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
   ActivityIndicator,
-  Dimensions,
   Alert,
 } from "react-native";
 import { useLocalSearchParams } from "expo-router";
@@ -13,16 +12,13 @@ import PoseOverlay from "../components/PoseOverlay";
 import {
   Camera,
   useCameraDevice,
-  useFrameProcessor,
   useCameraPermission,
 } from "react-native-vision-camera";
-import { useTensorflowModel } from "react-native-fast-tflite";
-import { parsePoseOutput } from "../utils/poseDetection";
-import { Pose } from "../utils/keypoints";
-import { Worklets } from "react-native-worklets-core";
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
+import { usePoseDetection } from "@/hooks/usePoseDetection";
 
 export default function CameraViewScreen() {
+  const { frameProcessor, isReady, pose, frameCount, cameraDimensions } =
+    usePoseDetection();
   const { joint, side, movement } = useLocalSearchParams<{
     joint?: string;
     side?: string;
@@ -30,16 +26,9 @@ export default function CameraViewScreen() {
   }>();
 
   const [facing, setFacing] = useState<"front" | "back">("front");
-  const [pose, setPose] = useState<Pose | null>(null);
-  const [cameraDimensions, setCameraDimensions] = useState({
-    width: SCREEN_WIDTH,
-    height: SCREEN_HEIGHT,
-  });
-  const frameCountRef = useRef(0);
 
   const { hasPermission, requestPermission } = useCameraPermission();
   const device = useCameraDevice(facing);
-  const model = useTensorflowModel(require("../assets/models/4.tflite"));
 
   useEffect(() => {
     if (!hasPermission) {
@@ -55,32 +44,6 @@ export default function CameraViewScreen() {
     }
   }, [hasPermission]);
 
-  const setPoseJS = useMemo(() => Worklets.createRunOnJS(setPose), []);
-  const setDimensionsJS = useMemo(
-    () => Worklets.createRunOnJS(setCameraDimensions),
-    [],
-  );
-
-  const frameProcessor = useFrameProcessor(
-    (frame) => {
-      "worklet";
-      if (model.state !== "loaded") return;
-
-      frameCountRef.current++;
-      if (frameCountRef.current % 2 !== 0) return;
-
-      const buffer = frame.toArrayBuffer();
-      const pixelData = new Uint8Array(buffer);
-
-      const outputs = model.model.runSync([pixelData]);
-      const result = parsePoseOutput(outputs[0] as Float32Array);
-      if (result) {
-        setPoseJS(result);
-        setDimensionsJS({ width: frame.width, height: frame.height });
-      }
-    },
-    [model],
-  );
   if (!hasPermission) {
     return (
       <View style={styles.container}>
@@ -101,8 +64,6 @@ export default function CameraViewScreen() {
     );
   }
 
-  const isReady = model.state === "loaded";
-
   return (
     <View style={styles.container}>
       <Camera
@@ -115,7 +76,7 @@ export default function CameraViewScreen() {
 
       <View style={styles.debugContainer}>
         <Text style={styles.debugText}>
-          Model: {model.state} | Frames: {frameCountRef.current}
+          Model: {isReady ? "Ready" : "Loading"} | Frames: {frameCount}
         </Text>
         <Text style={styles.debugText}>
           Pose: {pose ? `${pose.keypoints?.length || 0} keypoints` : "None"}

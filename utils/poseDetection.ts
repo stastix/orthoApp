@@ -6,6 +6,8 @@ export type { KeypointName, Keypoint, Pose } from "./keypoints";
 export { KEYPOINT_NAMES } from "./keypoints";
 
 export function parsePoseOutput(output: Float32Array): Pose | null {
+  "worklet";
+
   if (!output || output.length < 51) return null; // 17 keypoints * 3 values
 
   const keypoints: Keypoint[] = [];

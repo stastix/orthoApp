@@ -1,24 +1,55 @@
-// utils/usePoseDetection.ts
+// hooks/usePoseDetection.ts
+import { useState, useMemo, useRef } from "react";
 import { useTensorflowModel } from "react-native-fast-tflite";
 import { useFrameProcessor } from "react-native-vision-camera";
-import { runPoseDetection } from "../utils/poseDetection";
+import { parsePoseOutput } from "@/utils/poseDetection";
+import { resize } from "@/utils/resize";
+import { Worklets } from "react-native-worklets-core";
+import { Pose } from "@/utils/keypoints";
 
 export function usePoseDetection() {
-  const model = useTensorflowModel(require("../assets/models/movenet.tflite"));
+  const model = useTensorflowModel(require("../assets/models/4.tflite"));
+  const [pose, setPose] = useState<Pose | null>(null);
+  const [cameraDimensions, setCameraDimensions] = useState({
+    width: 1,
+    height: 1,
+  });
+  const frameCountRef = useRef(0);
+
+  const setPoseJS = useMemo(() => Worklets.createRunOnJS(setPose), []);
+  const setDimensionsJS = useMemo(
+    () => Worklets.createRunOnJS(setCameraDimensions),
+    [],
+  );
 
   const frameProcessor = useFrameProcessor(
     (frame) => {
       "worklet";
-      if (model.state !== "loaded") return;
+      if (model.state !== "loaded" || !model.model) return;
 
-      const pose = runPoseDetection(model.model, frame);
-      if (!pose) return;
+      console.log(`Received a ${frame.width} x ${frame.height} Frame!`);
 
-      // use pose.keypoints here
-      // e.g. pose.keypoints[0] = { x, y, score, name: 'nose' }
+      frameCountRef.current++;
+      if (frameCountRef.current % 2 !== 0) return;
+
+      const resized = resize(frame, 192, 192);
+      const outputs = model.model.runSync([resized]);
+      console.log(`Received ${outputs.length} outputs!`);
+
+      const result = parsePoseOutput(outputs[0] as Float32Array);
+      if (result) {
+        setPoseJS(result);
+        setDimensionsJS({ width: frame.width, height: frame.height });
+      }
     },
     [model],
   );
 
-  return { frameProcessor, isReady: model.state === "loaded" };
+  return {
+    frameProcessor,
+    pose,
+    cameraDimensions,
+    isReady: model.state === "loaded",
+    frameCount: frameCountRef.current,
+  };
 }
